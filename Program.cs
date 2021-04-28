@@ -23,23 +23,21 @@ namespace animatorapp
             Directory.CreateDirectory(OutputFolder);
 
             GIF = new(args[0]);
-            SaveSnapshot();
+            System.Drawing.ImageAnimator.Animate(GIF, new EventHandler(OnAnimated));
 
-            for (var loops = 0; loops < 3; loops++)
+            for (var frame = 0; frame < 1000; frame++)
             {
-                ImageAnimator.Animate(GIF, new EventHandler(OnAnimated));
-                Thread.Sleep(5000);
-
-                ImageAnimator.StopAnimate(GIF, new EventHandler(OnAnimated));
-                Thread.Sleep(5000);
+                SaveSnapshot();
+                Thread.Sleep(10);
             }
+
+            //ImageAnimator.StopAnimate(GIF, new EventHandler(OnAnimated));
         }
 
         private static void SaveSnapshot()
         {
-            ImageAnimator.UpdateFrames();
-
             string now = DateTime.Now.ToString("HH-mm-ss-ff");
+            System.Drawing.ImageAnimator.UpdateFrames();
             Image thumbnail = GIF.GetThumbnailImage(128, 128, null, IntPtr.Zero);
 
             thumbnail.Save(Path.Combine(OutputFolder, $"{now}.png"), ImageFormat.Png);
@@ -48,7 +46,6 @@ namespace animatorapp
         private static void OnAnimated(object o, EventArgs e)
         {
             Console.WriteLine("Animating...");
-            SaveSnapshot();
         }
     }
 }
