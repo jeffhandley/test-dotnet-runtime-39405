@@ -1,6 +1,8 @@
 ﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
+#nullable enable
+
 using System;
 using System.Diagnostics;
 using System.Drawing;
@@ -17,24 +19,24 @@ namespace animatorapp
         /// <summary>
         /// ImageAnimator nested helper class used to store extra image state info.
         /// </summary>
-        private sealed class ImageInfo
+        internal sealed class ImageInfo
         {
             private const int PropertyTagFrameDelay = 0x5100;
 
-            private readonly Image _image;
+            internal readonly Image _image;
             private int _frame;
             private readonly int _frameCount;
             private bool _frameDirty;
             private readonly bool _animated;
             private EventHandler? _onFrameChangedHandler;
-            private readonly int[] _frameDelay;
+            private readonly int[] _frameEndTimes;
             private int _frameTimer;
 
             public ImageInfo(Image image)
             {
                 _image = image;
                 _animated = ImageAnimator.CanAnimate(image);
-                _frameDelay = null!; // guaranteed to be initialized by the final check
+                _frameEndTimes = null!; // guaranteed to be initialized by the final check
 
                 if (_animated)
                 {
@@ -43,11 +45,9 @@ namespace animatorapp
                     PropertyItem? frameDelayItem = image.GetPropertyItem(PropertyTagFrameDelay);
 
                     // If the image does not have a frame delay, we just return 0.
-                    //
                     if (frameDelayItem != null)
                     {
                         // Convert the frame delay from byte[] to int
-                        //
                         byte[] values = frameDelayItem.Value!;
 
                         // On Windows, the frame delay bytes are repeated such that the array
@@ -55,7 +55,8 @@ namespace animatorapp
                         // are not repeated if the same delay applies to all frames.
                         Debug.Assert(FrameCount % (values.Length / 4) == 0, "PropertyItem has invalid value byte array. The FrameCount should be evenly divisible by a quarter of the byte array's length.");
 
-                        _frameDelay = new int[FrameCount];
+                        _frameEndTimes = new int[FrameCount];
+
                         for (int f = 0, i = 0; f < FrameCount; ++f, i += 4)
                         {
                             if (i == values.Length)
@@ -63,7 +64,8 @@ namespace animatorapp
                                 i = 0;
                             }
 
-                            _frameDelay[f] = values[i] + 256 * values[i + 1] + 256 * 256 * values[i + 2] + 256 * 256 * 256 * values[i + 3];
+                            // Frame delays are stored in 1/100ths of a second; convert to milliseconds while accumulating
+                            _frameEndTimes[f] = (f > 0 ? _frameEndTimes[f - 1] : 0) + (BitConverter.ToInt32(values, i) * 10);
                         }
                     }
                 }
@@ -71,9 +73,9 @@ namespace animatorapp
                 {
                     _frameCount = 1;
                 }
-                if (_frameDelay == null)
+                if (_frameEndTimes == null)
                 {
-                    _frameDelay = new int[FrameCount];
+                    _frameEndTimes = new int[FrameCount];
                 }
             }
 
@@ -97,23 +99,13 @@ namespace animatorapp
                 {
                     return _frame;
                 }
-                set
+            }
+
+            public int FrameEndTime
+            {
+                get
                 {
-                    if (_frame != value)
-                    {
-                        if (value < 0 || value >= FrameCount)
-                        {
-                            throw new ArgumentException("SR.InvalidFrame", nameof(value));
-                        }
-
-                        if (Animated)
-                        {
-                            _frame = value;
-                            _frameDirty = true;
-
-                            OnFrameChanged(EventArgs.Empty);
-                        }
-                    }
+                    return _frameEndTimes[_frame];
                 }
             }
 
@@ -152,29 +144,63 @@ namespace animatorapp
             }
 
             /// <summary>
-            /// The delay associated with the frame at the specified index.
+            /// The total animation time of the image, in milliseconds
             /// </summary>
-            public int FrameDelay(int frame)
+            public int TotalAnimationTime
             {
-                return _frameDelay![frame];
+                get
+                {
+                    if (Animated)
+                    {
+                        return _frameEndTimes[_frameCount - 1];
+                    }
+
+                    return 0;
+                }
             }
 
-            internal int FrameTimer
+            /// <summary>
+            /// The current time into the animation, in milliseconds
+            /// </summary>
+            public int AnimationTimer
             {
                 get
                 {
                     return _frameTimer;
                 }
-                set
-                {
-                    _frameTimer = value;
-                }
             }
+
+            public void AdvanceAnimationBy(int milliseconds)
+            {
+                int oldFrame = _frame;
+                _frameTimer += milliseconds;
+
+                if (_frameTimer > TotalAnimationTime)
+                {
+                    _frameTimer %= TotalAnimationTime;
+                }
+
+                if (_frame > 0 && _frameTimer < _frameEndTimes[_frame - 1])
+                {
+                    _frame = 0;
+                }
+
+                while (_frameTimer > _frameEndTimes[_frame])
+                {
+                    _frame++;
+                }
+
+                if (_frame != oldFrame)
+                {
+                    _frameDirty = true;
+                    OnFrameChanged();
+                }
+            }            
 
             /// <summary>
             /// The image this object wraps.
             /// </summary>
-            internal Image Image
+            public Image Image
             {
                 get
                 {
@@ -185,7 +211,7 @@ namespace animatorapp
             /// <summary>
             /// Selects the current frame as the active frame in the image.
             /// </summary>
-            internal void UpdateFrame()
+            public void UpdateFrame()
             {
                 if (_frameDirty)
                 {
@@ -197,11 +223,11 @@ namespace animatorapp
             /// <summary>
             /// Raises the FrameChanged event.
             /// </summary>
-            private void OnFrameChanged(EventArgs e)
+            private void OnFrameChanged()
             {
                 if (_onFrameChangedHandler != null)
                 {
-                    _onFrameChangedHandler(_image, e);
+                    _onFrameChangedHandler(this, EventArgs.Empty);
                 }
             }
         }

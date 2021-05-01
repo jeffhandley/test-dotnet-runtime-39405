@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
@@ -8,50 +9,63 @@ namespace animatorapp
 {
     class Program
     {
+        static DateTime StartTime;
         static string OutputFolder;
-        static Bitmap GIF_Local;
-        static Bitmap GIF_Main;
+        static Bitmap GIF;
+        static int FrameCount;
+        static int LastAnimationFrame = 0;
 
         static void Main(string[] args)
         {
-            if (args.Length != 2 || !File.Exists(args[0]))
+            if (args.Length < 2 || !File.Exists(args[0]))
             {
-                throw new ArgumentException("Syntax: appanimator imageFile outputFolder. " + string.Join(",", args));
+                throw new ArgumentException("Syntax: appanimator imageFile outputFolder [seconds]. " + string.Join(",", args));
             }
 
-            string now = DateTime.Now.ToString("HH-mm-ss-ff");
-            OutputFolder = Path.Combine(args[1], now);
+            if (args.Length > 2 && args[2] == "--debug")
+            {
+                System.Diagnostics.Debugger.Launch();
+            }
+
+            GIF = new(args[0]);
+            FrameCount = GIF.GetFrameCount(FrameDimension.Time);
+
+            StartTime = DateTime.Now;
+            OutputFolder = Path.Combine(args[1], StartTime.ToString("yyyy-MM-dd-HH-mm"));
             Directory.CreateDirectory(OutputFolder);
 
-            GIF_Local = new(args[0]);
-            GIF_Main = new(args[0]);
+            TakeSnapshot(GIF, 0, 0);
 
-            ImageAnimator.Animate(GIF_Local, new EventHandler(OnAnimated));
-            System.Drawing.ImageAnimator.Animate(GIF_Main, new EventHandler(OnAnimated));
+            ImageAnimator.Animate(GIF, OnAnimated);
 
-            for (var frame = 0; frame < 1000; frame++)
+            while (LastAnimationFrame < FrameCount)
             {
-                SaveSnapshot();
-                Thread.Sleep(10);
+                Thread.Sleep(1000);
             }
+
+            ImageAnimator.StopAnimate(GIF, OnAnimated);
         }
 
-        private static void SaveSnapshot()
+        private static void TakeSnapshot(Image image, int frame, int animationTime)
         {
-            string now = DateTime.Now.ToString("HH-mm-ss-ff");
-            ImageAnimator.UpdateFrames();
-            System.Drawing.ImageAnimator.UpdateFrames();
-
-            Image thumbnail_local = GIF_Local.GetThumbnailImage(128, 128, null, IntPtr.Zero);
-            thumbnail_local.Save(Path.Combine(OutputFolder, $"{now}_local.png"), ImageFormat.Png);
-
-            Image thumbnail_main = GIF_Main.GetThumbnailImage(128, 128, null, IntPtr.Zero);
-            thumbnail_main.Save(Path.Combine(OutputFolder, $"{now}_main.png"), ImageFormat.Png);
+            string filename = Path.Combine(OutputFolder, $"{frame}_{animationTime.ToString("00000")}.png");
+            image.Save(filename, ImageFormat.Png);
         }
 
         private static void OnAnimated(object o, EventArgs e)
         {
-            Console.WriteLine("Animating...");
+            ImageAnimator.ImageInfo imageInfo = (ImageAnimator.ImageInfo)o;
+
+            if (imageInfo.Frame > LastAnimationFrame)
+            {
+                LastAnimationFrame = imageInfo.Frame;
+                ImageAnimator.UpdateFrames(imageInfo._image);
+                TakeSnapshot(imageInfo._image, imageInfo.Frame, imageInfo.AnimationTimer);
+            }
+            else
+            {
+                LastAnimationFrame = FrameCount;
+            }
         }
     }
 }

@@ -1,6 +1,8 @@
 ﻿// Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
+#nullable enable
+
 using System;
 using System.Diagnostics.CodeAnalysis;
 using System.Drawing;
@@ -98,7 +100,7 @@ namespace animatorapp
         /// </summary>
         public static void UpdateFrames(Image image)
         {
-            if (!s_anyFrameDirty || image == null || s_imageInfoList == null)
+            if (image == null || s_imageInfoList == null)
             {
                 return;
             }
@@ -132,10 +134,10 @@ namespace animatorapp
                                 imageInfo.UpdateFrame();
                             }
                         }
+
                         foundImage = true;
                     }
-
-                    if (imageInfo.FrameDirty)
+                    else if (imageInfo.FrameDirty)
                     {
                         foundDirty = true;
                     }
@@ -163,6 +165,7 @@ namespace animatorapp
             {
                 return;
             }
+
             if (t_threadWriterLockWaitCount > 0)
             {
                 // Cannot acquire reader lock at this time, frames update will be missed.
@@ -181,6 +184,7 @@ namespace animatorapp
                         imageInfo.UpdateFrame();
                     }
                 }
+
                 s_anyFrameDirty = false;
             }
             finally
@@ -372,7 +376,6 @@ namespace animatorapp
             }
         }
 
-
         /// <summary>
         ///     Worker thread procedure which implements the main animation loop.
         ///     NOTE: This is the ONLY code the worker thread executes, keeping it in one method helps better understand
@@ -383,10 +386,20 @@ namespace animatorapp
         private static void AnimateImages50ms()
         {
             Debug.Assert(s_imageInfoList != null, "Null images list");
+            DateTime animationStart = DateTime.Now;
+            double totalAnimationTime, totalAnimationTimeLastAnimation = 0;
+            int thisAnimationDuration;
 
             while (true)
             {
-                // Acquire reader-lock to access imageInfoList, elemens in the list can be modified w/o needing a writer-lock.
+                Thread.Sleep(50);
+
+                // Because Thread.Sleep is not accurate, capture how much time has actually elapsed during the animation
+                totalAnimationTime = (DateTime.Now - animationStart).TotalMilliseconds;
+                thisAnimationDuration = (int)(totalAnimationTime - totalAnimationTimeLastAnimation);
+                totalAnimationTimeLastAnimation = totalAnimationTime;
+
+                // Acquire reader-lock to access imageInfoList, elements in the list can be modified w/o needing a writer-lock.
                 // Observe that we don't need to check if the thread is waiting or a writer lock here since the thread this
                 // method runs in never acquires a writer lock.
                 s_rwImgListLock.AcquireReaderLock(Timeout.Infinite);
@@ -396,24 +409,9 @@ namespace animatorapp
                     {
                         ImageInfo imageInfo = s_imageInfoList[i];
 
-                        // Frame delay is measured in 1/100ths of a second. This thread
-                        // sleeps for 50 ms = 5/100ths of a second between frame updates,
-                        // so we increase the frame delay count 5/100ths of a second
-                        // at a time.
-                        //
-                        imageInfo.FrameTimer += 5;
-                        if (imageInfo.FrameTimer >= imageInfo.FrameDelay(imageInfo.Frame))
+                        if (imageInfo.Animated)
                         {
-                            imageInfo.FrameTimer = 0;
-
-                            if (imageInfo.Frame + 1 < imageInfo.FrameCount)
-                            {
-                                imageInfo.Frame++;
-                            }
-                            else
-                            {
-                                imageInfo.Frame = 0;
-                            }
+                            imageInfo.AdvanceAnimationBy(thisAnimationDuration);
 
                             if (imageInfo.FrameDirty)
                             {
@@ -426,8 +424,6 @@ namespace animatorapp
                 {
                     s_rwImgListLock.ReleaseReaderLock();
                 }
-
-                Thread.Sleep(50);
             }
         }
     }
